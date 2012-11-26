@@ -1,111 +1,104 @@
 package Plack::Middleware::StackTraceLog;
-
-use 5.006;
 use strict;
 use warnings;
-
-=head1 NAME
-
-Plack::Middleware::StackTraceLog - The great new Plack::Middleware::StackTraceLog!
-
-=head1 VERSION
-
-Version 0.01
-
-=cut
+use parent qw(Plack::Middleware);
+use Devel::StackTrace;
+use Try::Tiny;
+use DateTime;
+use Data::Dumper;
+use Plack::Util::Accessor qw( logger );
 
 our $VERSION = '0.01';
 
+our $StackTraceClass = 'Devel::StackTrace';
+
+sub call {
+    my ($self, $env) = @_;
+
+    my $trace;
+    local $SIG{__DIE__} = sub {
+        $trace = $StackTraceClass->new(
+            indent => 1, message => munge_error($_[0], [ caller ]),
+            ignore_package => __PACKAGE__,
+        );
+
+        die @_;
+    };
+
+    my $caught;
+    my $res = try {
+        $self->app->($env);
+    } catch {
+        $caught = $_;
+
+        [ 500, [ "Content-Type", "text/plain" ], ["Internal Server Error"] ];
+    };
+
+    if ($trace && $caught) {
+        $self->logger->(DateTime->now(time_zone => 'Asia/Tokyo'), "\n");
+
+        $self->logger->("\n");
+
+        local $Data::Dumper::Indent = 0;
+        local $Data::Dumper::Terse = 1;
+        for my $key (sort keys %$env) {
+            $self->logger->("\t", $key, ':', "\t", (Dumper $env->{$key}), "\n");
+        }
+
+        $self->logger->("\n");
+        $self->logger->($trace->as_string);
+        $self->logger->("\n\n\n");
+    }
+
+    return $res;
+}
+
+# copied from Plack::Middleware::StackTrace.
+sub munge_error {
+    my ($err, $caller) = @_;
+    return $err if ref $err;
+
+    # Ugly hack to remove " at ... line ..." automatically appended by perl
+    # If there's a proper way to do this, please let me know.
+    $err =~ s/ at \Q$caller->[1]\E line $caller->[2]\.\n$//;
+
+    return $err;
+}
+
+1;
+
+__END__
+
+=head1 NAME
+
+Plack::Middleware::StackTraceLog - Logs when your app dies
 
 =head1 SYNOPSIS
 
-Quick summary of what the module does.
+ enable 'StackTraceLog';
 
-Perhaps a little code snippet.
+=head1 DESCRIPTION
 
-    use Plack::Middleware::StackTraceLog;
+Plack::Middleware::StackTraceLog catches exceptions (run-time errors) and logs the stacktrace.
 
-    my $foo = Plack::Middleware::StackTraceLog->new();
-    ...
-
-=head1 EXPORT
-
-A list of functions that can be exported.  You can delete this section
-if you don't export anything, such as for a purely object-oriented module.
-
-=head1 SUBROUTINES/METHODS
-
-=head2 function1
-
-=cut
-
-sub function1 {
-}
-
-=head2 function2
-
-=cut
-
-sub function2 {
-}
-
-=head1 AUTHOR
-
-Eitarow Fukamachi, C<< <e.arrows at gmail.com> >>
-
-=head1 BUGS
-
-Please report any bugs or feature requests to C<bug-plack-middleware-stacktracelog at rt.cpan.org>, or through
-the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Plack-Middleware-StackTraceLog>.  I will be notified, and then you'll
-automatically be notified of progress on your bug as I make changes.
-
-
-
-
-=head1 SUPPORT
-
-You can find documentation for this module with the perldoc command.
-
-    perldoc Plack::Middleware::StackTraceLog
-
-
-You can also look for information at:
+=head1 CONFIGURATION
 
 =over 4
 
-=item * RT: CPAN's request tracker (report bugs here)
+=item logger
 
-L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Plack-Middleware-StackTraceLog>
-
-=item * AnnoCPAN: Annotated CPAN documentation
-
-L<http://annocpan.org/dist/Plack-Middleware-StackTraceLog>
-
-=item * CPAN Ratings
-
-L<http://cpanratings.perl.org/d/Plack-Middleware-StackTraceLog>
-
-=item * Search CPAN
-
-L<http://search.cpan.org/dist/Plack-Middleware-StackTraceLog/>
+  open my $fh, '>>', '/var/log/app/error_log' or die "Cannot load error_log file: $!";
+  enable "Plack::Middleware::StackTraceLog",
+      logger => sub { print $fh @_ };
 
 =back
 
+=head1 AUTHOR
 
-=head1 ACKNOWLEDGEMENTS
+Eitarow Fukamachi
 
+=head1 SEE ALSO
 
-=head1 LICENSE AND COPYRIGHT
-
-Copyright 2012 Eitarow Fukamachi.
-
-This program is free software; you can redistribute it and/or modify it
-under the terms of either: the GNU General Public License as published
-by the Free Software Foundation; or the Artistic License.
-
-See http://dev.perl.org/licenses/ for more information.
-
+L<Plack::Middleware::StackTrace> L<Plack::Middelware>
 
 =cut
-
-1; # End of Plack::Middleware::StackTraceLog
